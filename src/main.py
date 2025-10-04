@@ -5,7 +5,7 @@ import math
 def text_to_token(text: str):
   return text.split()
 
-def token_to_ngram(tokens: list[str], n: int = 3):
+def token_to_ngram(tokens: list[str], n: int = 3) -> list[str]:
   n_gramized_token = [] 
 
   for token in tokens:
@@ -101,46 +101,36 @@ def calculate_tf_idf(docInverted, targetDocId: int, targetTerm: str):
 
   return tf * idf
 
+
+def searchWord(target: str, docInverted):
+  containTargetList = docInverted.index[target]
+  docTargetCount = {} 
+  for t in containTargetList:
+    if docTargetCount.get(t[0]) == None:
+      docTargetCount[t[0]] = 1
+    else:
+      docTargetCount[t[0]] = docTargetCount[t[0]] + 1
+
+  mostList = {"id": 0, "count": 0}
+  for docTargetCountKey in docTargetCount.keys():
+    if docTargetCount[docTargetCountKey] > mostList["count"]:
+      mostList["id"] = docTargetCountKey
+      mostList["count"] = docTargetCount[docTargetCountKey]
+
+  return mostList
+
 if __name__ == "__main__":
-  with open("../data/tiny_hamlet.txt") as f:
-    shakespere_test = f.read()
-
-  print(" ".join(delete_stopwords(text_to_token(shakespere_test))))
-
-  print("\n" + " ".join(shakespere_test.split()))
-
-  Indexes = create_inverted_index(delete_stopwords(text_to_token(shakespere_test)))
-  print(Indexes)
-
-  print(nextPhrase("To", 54, Indexes.index)) 
-
-  print(token_to_ngram(["Orienterring", "Smithnian"]))
-
   with open("../data/hamlet_TXT_FolgerShakespeare.txt") as f:
     shakespeare_doc = f.read()
-  
+    removed_n_doc = shakespeare_doc.split("\n\n")
+
   docs = {}
-  for i, doc in enumerate(shakespeare_doc.split("\n\n")):
+  for i, doc in enumerate(removed_n_doc):
     docs[i] = doc.split()
-  
-  #doc_Indexes = create_document_inverted_index(docs)
+    #for text in docs[i]: 
+      #token_to_ngram(text)
 
-  document_tiny = {
-    1: "Do you quarrel, sir?".split(),
-    2: "Quarrel sir! no, sir!".split(),
-    3: "If you do, sir, I am for you: I serve as good a man as you".split(),
-    4: "No better".split(),
-    5: "Well, sir".split()
-    }
 
-  docIndexes = create_document_inverted_index(document_tiny)
-  print(docIndexes)
- 
-  document_tiny_tfidf = {}
-  for docKey in document_tiny.keys():
-    termsTFIDF = [] 
-    for term in document_tiny[docKey]:
-      termsTFIDF.append(calculate_tf_idf(docIndexes, docKey, "sir")) 
-    document_tiny_tfidf[docKey] = termsTFIDF
-  
-  print(document_tiny_tfidf)
+  doc_Indexes = create_document_inverted_index(docs)
+
+  print(searchWord("you", doc_Indexes))
