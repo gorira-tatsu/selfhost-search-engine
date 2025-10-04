@@ -5,7 +5,7 @@ import math
 def text_to_token(text: str):
   return text.split()
 
-def token_to_ngram(tokens: list[str], n: int = 3) -> list[str]:
+def token_to_ngram(tokens: list[str], n: int = 3) -> list[list[str]]:
   n_gramized_token = [] 
 
   for token in tokens:
@@ -21,7 +21,7 @@ def token_to_ngram(tokens: list[str], n: int = 3) -> list[str]:
 
   return n_gramized_token
 
-def delete_stopwords(words: list[str]):
+def delete_stopwords(words: list[str]) -> list[str]:
   with open("../data/NLTK_stopwords_list") as f:
     stopwords = f.read().split()
 
@@ -124,13 +124,13 @@ if __name__ == "__main__":
     shakespeare_doc = f.read()
     removed_n_doc = shakespeare_doc.split("\n\n")
 
-  docs = {}
-  for i, doc in enumerate(removed_n_doc):
-    docs[i] = doc.split()
-    #for text in docs[i]: 
-      #token_to_ngram(text)
+    docs = {}
+    for i, doc in enumerate(removed_n_doc):
+      docs[i] = delete_stopwords(doc.split())
 
+    dealed_docs = docs
 
-  doc_Indexes = create_document_inverted_index(docs)
+  doc_Indexes = create_document_inverted_index(dealed_docs)
 
-  print(searchWord("you", doc_Indexes))
+  searchResult = searchWord("you", doc_Indexes)
+  print(dealed_docs[searchResult["id"]])
