@@ -44,24 +44,34 @@ def create_inverted_index(tokens: list[str]):
         tmp[token].append(i)
     return InvertedIndex(index=tmp)
 
-class DocumentInvertedIndex(BaseModel):
-      index: Dict[str, List[Tuple[int, int]]]
-      metaData: Dict[str, int]
+class CorpusMeta(BaseModel):
+    documentCount: int
+    documentLengthAverage: float
 
-def create_document_inverted_index(document: dict[list[str]]):
+class DocumentInvertedIndex(BaseModel):
+    index: Dict[str, List[Tuple[int, int]]]
+    metaData: CorpusMeta
+
+
+def create_document_inverted_index(document: dict[int, list[str]]):
     tmp = {}
     documentAllLengthCount = 0
-    for i, key in enumerate(document.keys()):
-      tokens = document[key]
-      documentAllLengthCount = documentAllLengthCount + len(tokens)
-      for j, token in enumerate(tokens):
-        if tmp.get(token) == None:
-          tmp[token] = [tuple([key, j])]
-        else:
-          tmp[token].append(tuple([key, j]))
-    
-    return DocumentInvertedIndex(index=tmp, metaData={"documentCount": len(document.keys()), "documentLengthAverage": documentAllLengthCount / len(document.keys())})
-    #return tmp
+    for key, tokens in document.items():
+        documentAllLengthCount += len(tokens)
+        for j, token in enumerate(tokens):
+            tmp.setdefault(token, []).append((key, j))
+
+    doc_count = len(document)
+    avg_len = documentAllLengthCount / doc_count if doc_count else 0.0
+
+    return DocumentInvertedIndex(
+        index=tmp,
+        metaData=CorpusMeta(
+            documentCount=doc_count,
+            documentLengthAverage=avg_len,
+        ),
+    )
+
 
 def binarySearch(array: list, target: int, offset: int = 0) -> int:
     middleIndex = len(array) // 2
@@ -96,7 +106,7 @@ def calculate_tf_idf(docInverted, targetDocId: int, targetTerm: str):
     else:
       tf = math.log2(len(targetTermDoc)) + 1
 
-    documentCount = docInverted.metaData["documentCount"]
+    documentCount = docInverted.documentCount
     containTermDocumentCount = len(set(containTermDocument))
 
     idf = math.log2(documentCount/containTermDocumentCount)
@@ -117,9 +127,9 @@ def rankBM25_DocumentAtATime(docInverted, docs, targetTerm: str, k_1: float = 1.
     for doc in targetDoc.keys():
         f_td = len(targetDoc[doc])
         l_d = len(docs[doc])
-        l_avg = docInverted.metaData["documentLengthAverage"]
+        l_avg = docInverted.metaData.documentLengthAverage
 
-        N = docInverted.metaData["documentCount"]
+        N = docInverted.metaData.documentCount
         n_t = len(targetDoc.keys())
 
         TF_BM25 = (f_td * (k_1 + 1)) / ((f_td + k_1) * ((1 - b) + b * (l_d / l_avg)))
@@ -151,30 +161,47 @@ def searchWord(target: str, docInverted):
     return mostList
 
 if __name__ == "__main__":
+    from collections import defaultdict
+
     TEXT_PATH = "../data/hamlet_TXT_FolgerShakespeare.txt"
 
     with open(TEXT_PATH, encoding="utf-8") as f:
-      shakespeare_doc = f.read()
-
-    paragraphs = [p for p in shakespeare_doc.split("\n\n") if p.strip()]
+        text = f.read()
+    paragraphs = [p for p in text.split("\n\n") if p.strip()]
 
     docs: Dict[int, List[str]] = {}
-    for i, doc in enumerate(paragraphs):
-      tokens = text_to_token(doc)
-      tokens = delete_stopwords(tokens)
-      docs[i] = tokens
+    for i, p in enumerate(paragraphs):
+        toks = delete_stopwords(text_to_token(p))
+        docs[i] = toks
 
-    doc_indexes = create_document_inverted_index(docs)
+    doc_idx = create_document_inverted_index(docs)
+    print(f"[Index] docs={len(docs)}, avg_len={doc_idx.metaData.documentLengthAverage:.2f}")
 
-    target = "I"
-    result = searchWord(target, doc_indexes)
+    def bm25_one(term: str, topk: int = 3):
+        if term not in doc_idx.index:
+            print(f'[1term] "{term}": no hit'); return
+        scores = rankBM25_DocumentAtATime(doc_idx, docs, term, k_1=1.5, b=0.75)
+        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:topk]
+        print(f'[1term] "{term}" top{topk}')
+        for r, (d, s) in enumerate(top, 1):
+            print(f"  #{r} doc={d} score={s:.4f}")
 
-    if result != None:
+    def bm25_multi(terms: List[str], topk: int = 3):
+        acc = defaultdict(float)
+        hit = False
+        for t in terms:
+            if t in doc_idx.index:
+                hit = True
+                for d, s in rankBM25_DocumentAtATime(doc_idx, docs, t, k_1=1.5, b=0.75).items():
+                    acc[d] += s
+        if not hit:
+            print(f'[multi] {terms}: no hit'); return
+        top = sorted(acc.items(), key=lambda x: x[1], reverse=True)[:topk]
+        print(f'[multi] {terms} top{topk}')
+        for r, (d, s) in enumerate(top, 1):
+            print(f"  #{r} doc={d} score={s:.4f}")
 
-        top_id = result["id"]
-        count = result["count"]
-
-        print(f'Top document for "{target}": id={top_id}, count={count}')
-        preview = " ".join(docs[top_id][:100])
-        print(preview)
+    bm25_one("hamlet")
+    bm25_one("king")
+    bm25_multi(["hamlet", "king"])
 
