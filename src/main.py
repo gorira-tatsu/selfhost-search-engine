@@ -52,6 +52,29 @@ class DocumentInvertedIndex(BaseModel):
     index: Dict[str, List[Tuple[int, int]]]
     metaData: CorpusMeta
 
+def addDocumentInvertedIndex(docInvertedIndex: DocumentInvertedIndex, chunk: list[str], docId: int):
+    tmp = {}
+    chunkSentence = " ".join(chunk)
+    chunkTokens = text_to_token(chunkSentence)    
+    chunkDocumentLength = len(chunkTokens)
+    
+    for i, token in enumerate(chunkTokens):
+        postings = docInvertedIndex.index.setdefault(token, [])
+        postings.append((docId, i))
+        docInvertedIndex.index[token] = sorted(postings)
+
+    prev_count = docInvertedIndex.metaData.documentCount
+    prev_avg = docInvertedIndex.metaData.documentLengthAverage
+    new_count = prev_count + 1
+    if new_count == 0:
+        new_avg = 0.0
+    else:
+        # keep running mean to avoid recalculating from scratch
+        new_avg = ((prev_avg * prev_count) + chunkDocumentLength) / new_count
+    docInvertedIndex.metaData.documentCount = new_count
+    docInvertedIndex.metaData.documentLengthAverage = new_avg
+
+    return docInvertedIndex
 
 def create_document_inverted_index(document: dict[int, list[str]]):
     tmp = {}
@@ -160,48 +183,69 @@ def searchWord(target: str, docInverted):
 
     return mostList
 
+def FileToIndex(filePath: str):
+    docInvertedIndex = None
+    with open(filePath, encoding="utf-8") as f:
+        chunk = []
+        chunk_id = 0
+        for line in f:
+            if line != "\n":
+                chunk.append(line)
+            elif chunk != None and line == "\n":
+                chunk_id = chunk_id + 1
+                if docInvertedIndex == None:
+                    docInvertedIndex = create_document_inverted_index({1: chunk})
+                else:
+                    docInvertedIndex = addDocumentInvertedIndex(docInvertedIndex, chunk, chunk_id)
+                del chunk
+                chunk = []
+            if chunk_id % 1000 == 0 and chunk_id != 0:
+                print(chunk_id)
+    return docInvertedIndex
+
 if __name__ == "__main__":
     from collections import defaultdict
 
-    TEXT_PATH = "../data/hamlet_TXT_FolgerShakespeare.txt"
+    TEXT_PATH = "../data/enwiki-latest-pages-articles-multistream.xml"
+    
+    docInverted = FileToIndex(TEXT_PATH)
+    print(docInverted)
+   # with open(TEXT_PATH, encoding="utf-8") as f:
+   #     text = f.read()
+   # paragraphs = [p for p in text.split("\n\n") if p.strip()]
 
-    with open(TEXT_PATH, encoding="utf-8") as f:
-        text = f.read()
-    paragraphs = [p for p in text.split("\n\n") if p.strip()]
+   # docs: Dict[int, List[str]] = {}
+   # for i, p in enumerate(paragraphs):
+   #     toks = delete_stopwords(text_to_token(p))
+   #     docs[i] = toks
 
-    docs: Dict[int, List[str]] = {}
-    for i, p in enumerate(paragraphs):
-        toks = delete_stopwords(text_to_token(p))
-        docs[i] = toks
+   # doc_idx = create_document_inverted_index(docs)
+   # print(f"[Index] docs={len(docs)}, avg_len={doc_idx.metaData.documentLengthAverage:.2f}")
 
-    doc_idx = create_document_inverted_index(docs)
-    print(f"[Index] docs={len(docs)}, avg_len={doc_idx.metaData.documentLengthAverage:.2f}")
+   # def bm25_one(term: str, topk: int = 3):
+   #     if term not in doc_idx.index:
+   #         print(f'[1term] "{term}": no hit'); return
+   #     scores = rankBM25_DocumentAtATime(doc_idx, docs, term, k_1=1.5, b=0.75)
+   #     top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:topk]
+   #     print(f'[1term] "{term}" top{topk}')
+   #     for r, (d, s) in enumerate(top, 1):
+   #         print(f"  #{r} doc={d} score={s:.4f}")
 
-    def bm25_one(term: str, topk: int = 3):
-        if term not in doc_idx.index:
-            print(f'[1term] "{term}": no hit'); return
-        scores = rankBM25_DocumentAtATime(doc_idx, docs, term, k_1=1.5, b=0.75)
-        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:topk]
-        print(f'[1term] "{term}" top{topk}')
-        for r, (d, s) in enumerate(top, 1):
-            print(f"  #{r} doc={d} score={s:.4f}")
+   # def bm25_multi(terms: List[str], topk: int = 3):
+   #     acc = defaultdict(float)
+   #     hit = False
+   #     for t in terms:
+   #         if t in doc_idx.index:
+   #             hit = True
+   #             for d, s in rankBM25_DocumentAtATime(doc_idx, docs, t, k_1=1.5, b=0.75).items():
+   #                 acc[d] += s
+   #     if not hit:
+   #         print(f'[multi] {terms}: no hit'); return
+   #     top = sorted(acc.items(), key=lambda x: x[1], reverse=True)[:topk]
+   #     print(f'[multi] {terms} top{topk}')
+   #     for r, (d, s) in enumerate(top, 1):
+   #         print(f"  #{r} doc={d} score={s:.4f}")
 
-    def bm25_multi(terms: List[str], topk: int = 3):
-        acc = defaultdict(float)
-        hit = False
-        for t in terms:
-            if t in doc_idx.index:
-                hit = True
-                for d, s in rankBM25_DocumentAtATime(doc_idx, docs, t, k_1=1.5, b=0.75).items():
-                    acc[d] += s
-        if not hit:
-            print(f'[multi] {terms}: no hit'); return
-        top = sorted(acc.items(), key=lambda x: x[1], reverse=True)[:topk]
-        print(f'[multi] {terms} top{topk}')
-        for r, (d, s) in enumerate(top, 1):
-            print(f"  #{r} doc={d} score={s:.4f}")
-
-    bm25_one("hamlet")
-    bm25_one("king")
-    bm25_multi(["hamlet", "king"])
-
+   # bm25_one("hamlet")
+   # bm25_one("king")
+   # bm25_multi(["hamlet", "king"])
