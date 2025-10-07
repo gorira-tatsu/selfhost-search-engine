@@ -185,32 +185,77 @@ def searchWord(target: str, docInverted):
 
 def FileToIndex(filePath: str):
     docInvertedIndex = None
+    docIdFilePosition: Dict[int, Dict[str, int]] = {}
+
+    def _finalize_chunk(end_position: int, chunk: List[str], chunk_start: int, chunk_id: int):
+        nonlocal docInvertedIndex
+        if not chunk:
+            return chunk_id
+
+        chunk_id += 1
+        chunk_tokens = text_to_token(" ".join(chunk))
+
+        if docInvertedIndex is None:
+            docInvertedIndex = create_document_inverted_index({chunk_id: chunk_tokens})
+        else:
+            docInvertedIndex = addDocumentInvertedIndex(docInvertedIndex, chunk_tokens, chunk_id)
+
+        docIdFilePosition[chunk_id] = {
+            "start": chunk_start,
+            "end": end_position,
+        }
+
+        if chunk_id % 1000 == 0:
+            print(chunk_id)
+
+        return chunk_id
+
     with open(filePath, encoding="utf-8") as f:
-        chunk = []
+        chunk: List[str] = []
         chunk_id = 0
-        for line in f:
-            if line != "\n":
-                chunk.append(line)
-            elif chunk != None and line == "\n":
-                chunk_id = chunk_id + 1
-                if docInvertedIndex == None:
-                    docInvertedIndex = create_document_inverted_index({1: chunk})
-                else:
-                    docInvertedIndex = addDocumentInvertedIndex(docInvertedIndex, chunk, chunk_id)
-                del chunk
-                chunk = []
-            if chunk_id % 1000 == 0 and chunk_id != 0:
-                print(chunk_id)
-    return docInvertedIndex
+        chunk_start_position = 0
+
+        while True:
+            line_start_position = f.tell()
+            line = f.readline()
+
+            if not line:
+                chunk_id = _finalize_chunk(line_start_position, chunk, chunk_start_position, chunk_id)
+                break
+
+            if line.strip():
+                chunk.append(line.rstrip("\n"))
+                continue
+
+            chunk_id = _finalize_chunk(line_start_position, chunk, chunk_start_position, chunk_id)
+            chunk.clear()
+            chunk_start_position = f.tell()
+
+    return docInvertedIndex, docIdFilePosition
+
+def getDocumentByLine(start: int, end: int, TEXT_PATH: str):
+    lines = [] 
+    with open(TEXT_PATH, "r") as f:
+        f.seek(start)
+        while f.tell() <= end:
+            lines.append(f.readline())
+    return lines
 
 if __name__ == "__main__":
     from collections import defaultdict
 
-    TEXT_PATH = "../data/enwiki-latest-pages-articles-multistream.xml"
+    #TEXT_PATH = "../data/enwiki-latest-pages-articles-multistream.xml"
+    TEXT_PATH = "../data/hamlet_TXT_FolgerShakespeare.txt"
     
     docInverted = FileToIndex(TEXT_PATH)
     print(docInverted)
-   # with open(TEXT_PATH, encoding="utf-8") as f:
+
+    result = searchWord("To", docInverted[0])
+    forDocPosition = docInverted[1][result["id"]]
+    print(result)
+    print(getDocumentByLine(forDocPosition["start"], forDocPosition["end"], TEXT_PATH))
+
+# with open(TEXT_PATH, encoding="utf-8") as f:
    #     text = f.read()
    # paragraphs = [p for p in text.split("\n\n") if p.strip()]
 
