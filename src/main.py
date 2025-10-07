@@ -237,7 +237,7 @@ def getDocumentByLine(start: int, end: int, TEXT_PATH: str):
     lines = [] 
     with open(TEXT_PATH, "r") as f:
         f.seek(start)
-        while f.tell() <= end:
+        while f.tell() < end:
             lines.append(f.readline())
     return lines
 
