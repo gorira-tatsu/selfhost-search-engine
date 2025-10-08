@@ -50,11 +50,11 @@ class TestMainModule(unittest.TestCase):
         doc_index = main.create_document_inverted_index(docs)
 
         debug("docs", docs)
-        debug("doc_index.metaData", doc_index.metaData)
+        debug("doc_index.document_count", doc_index.document_count)
         debug("doc_index.index", doc_index.index)
 
-        self.assertEqual(doc_index.metaData.documentCount, 2)
-        self.assertEqual(doc_index.metaData.documentLengthAverage, 2)
+        self.assertEqual(doc_index.document_count, 2)
+        self.assertEqual(doc_index.average_length, 2)
         self.assertEqual(doc_index.index["hello"], [(0, 0), (1, 0)])
         self.assertEqual(doc_index.index["world"], [(0, 1)])
 
@@ -64,11 +64,11 @@ class TestMainModule(unittest.TestCase):
         updated = main.addDocumentInvertedIndex(base_index, ["foo baz"], docId=1)
 
         debug("base_index.index", base_index.index)
-        debug("updated.metaData", updated.metaData)
+        debug("updated.document_count", updated.document_count)
         debug("updated.index", updated.index)
 
-        self.assertEqual(updated.metaData.documentCount, 2)
-        self.assertTrue(math.isclose(updated.metaData.documentLengthAverage, 2.0))
+        self.assertEqual(updated.document_count, 2)
+        self.assertTrue(math.isclose(updated.average_length, 2.0))
         self.assertEqual(updated.index["foo"], [(0, 0), (1, 0)])
         self.assertEqual(updated.index["bar"], [(0, 1)])
         self.assertEqual(updated.index["baz"], [(1, 1)])

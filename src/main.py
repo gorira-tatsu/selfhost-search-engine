@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Dict, List, Tuple
+from pydantic import BaseModel, Field
+from typing import Dict, List, Optional, Tuple
 import math
 
 def text_to_token(text: str):
@@ -44,56 +44,50 @@ def create_inverted_index(tokens: list[str]):
         tmp[token].append(i)
     return InvertedIndex(index=tmp)
 
-class CorpusMeta(BaseModel):
-    documentCount: int
-    documentLengthAverage: float
+class DocumentInverted(BaseModel):
+    """In-memory document-level inverted index with postings and file offsets."""
 
-class DocumentInvertedIndex(BaseModel):
-    index: Dict[str, List[Tuple[int, int]]]
-    metaData: CorpusMeta
+    index: Dict[str, List[Tuple[int, int]]] = Field(default_factory=dict)
+    doc_positions: Dict[int, Dict[str, int]] = Field(default_factory=dict)
+    total_length: int = 0
 
-def addDocumentInvertedIndex(docInvertedIndex: DocumentInvertedIndex, chunk: list[str], docId: int):
-    tmp = {}
+    class Config:
+        arbitrary_types_allowed = True
+
+    def add_chunk(self, doc_id: int, tokens: List[str], start: Optional[int] = None, end: Optional[int] = None):
+        for position, token in enumerate(tokens):
+            postings = self.index.setdefault(token, [])
+            postings.append((doc_id, position))
+        self.doc_positions[doc_id] = {"start": start, "end": end}
+        self.total_length += len(tokens)
+
+    @property
+    def document_count(self) -> int:
+        return len(self.doc_positions)
+
+    @property
+    def average_length(self) -> float:
+        count = self.document_count
+        return self.total_length / count if count else 0.0
+
+    def has_term(self, term: str) -> bool:
+        return term in self.index
+
+    def term_postings(self, term: str) -> List[Tuple[int, int]]:
+        return self.index.get(term, [])
+
+def addDocumentInvertedIndex(docInvertedIndex: DocumentInverted, chunk: list[str], docId: int) -> DocumentInverted:
     chunkSentence = " ".join(chunk)
-    chunkTokens = text_to_token(chunkSentence)    
-    chunkDocumentLength = len(chunkTokens)
-    
-    for i, token in enumerate(chunkTokens):
-        postings = docInvertedIndex.index.setdefault(token, [])
-        postings.append((docId, i))
-        docInvertedIndex.index[token] = sorted(postings)
-
-    prev_count = docInvertedIndex.metaData.documentCount
-    prev_avg = docInvertedIndex.metaData.documentLengthAverage
-    new_count = prev_count + 1
-    if new_count == 0:
-        new_avg = 0.0
-    else:
-        # keep running mean to avoid recalculating from scratch
-        new_avg = ((prev_avg * prev_count) + chunkDocumentLength) / new_count
-    docInvertedIndex.metaData.documentCount = new_count
-    docInvertedIndex.metaData.documentLengthAverage = new_avg
-
+    chunkTokens = text_to_token(chunkSentence)
+    docInvertedIndex.add_chunk(docId, chunkTokens)
     return docInvertedIndex
 
-def create_document_inverted_index(document: dict[int, list[str]]):
-    tmp = {}
-    documentAllLengthCount = 0
+
+def create_document_inverted_index(document: dict[int, list[str]]) -> DocumentInverted:
+    doc_index = DocumentInverted()
     for key, tokens in document.items():
-        documentAllLengthCount += len(tokens)
-        for j, token in enumerate(tokens):
-            tmp.setdefault(token, []).append((key, j))
-
-    doc_count = len(document)
-    avg_len = documentAllLengthCount / doc_count if doc_count else 0.0
-
-    return DocumentInvertedIndex(
-        index=tmp,
-        metaData=CorpusMeta(
-            documentCount=doc_count,
-            documentLengthAverage=avg_len,
-        ),
-    )
+        doc_index.add_chunk(key, tokens)
+    return doc_index
 
 
 def binarySearch(array: list, target: int, offset: int = 0) -> int:
@@ -116,94 +110,75 @@ def nextPhrase(term: str, PreviousPosition: int, inverted_index: InvertedIndex):
     return None
 
 
-def calculate_tf_idf(docInverted, targetDocId: int, targetTerm: str):
-    targetTermDoc = []
-    containTermDocument = []
-    for index in docInverted.index[targetTerm]:
-      if index[0] == targetDocId: 
-        targetTermDoc.append(index)
-      containTermDocument.append(index[0])
+def calculate_tf_idf(docInverted: DocumentInverted, targetDocId: int, targetTerm: str):
+    postings = docInverted.term_postings(targetTerm)
+    targetTermDoc = [p for p in postings if p[0] == targetDocId]
+    containTermDocument = {doc_id for doc_id, _ in postings}
 
-    if len(targetTermDoc) == 0:
-      tf = 0
+    if not targetTermDoc:
+        tf = 0.0
     else:
-      tf = math.log2(len(targetTermDoc)) + 1
+        tf = math.log2(len(targetTermDoc)) + 1
 
-    documentCount = docInverted.documentCount
-    containTermDocumentCount = len(set(containTermDocument))
+    documentCount = docInverted.document_count
+    containTermDocumentCount = len(containTermDocument) or 1
 
-    idf = math.log2(documentCount/containTermDocumentCount)
+    if documentCount == 0:
+        idf = 0.0
+    else:
+        idf = math.log2(documentCount / containTermDocumentCount)
 
     return tf * idf
 
 
-def rankBM25_DocumentAtATime(docInverted, docs, targetTerm: str, k_1: float = 1.2, b: float = 0.75):
-    targetTermsPositionList = docInverted.index[targetTerm]
-    targetDoc = {}
-    for index in targetTermsPositionList:
-        if targetDoc.get(index[0]) == None:
-            targetDoc[index[0]] = [index[1]]
-        else:
-            targetDoc[index[0]].append(index[1])
+def rankBM25_DocumentAtATime(docInverted: DocumentInverted, docs: Dict[int, List[str]], targetTerm: str, k_1: float = 1.2, b: float = 0.75):
+    targetTermsPositionList = docInverted.term_postings(targetTerm)
+    if not targetTermsPositionList:
+        return {}
 
-    forDocScore = {}
-    for doc in targetDoc.keys():
-        f_td = len(targetDoc[doc])
-        l_d = len(docs[doc])
-        l_avg = docInverted.metaData.documentLengthAverage
+    targetDoc: Dict[int, List[int]] = {}
+    for doc_id, position in targetTermsPositionList:
+        positions = targetDoc.setdefault(doc_id, [])
+        positions.append(position)
 
-        N = docInverted.metaData.documentCount
-        n_t = len(targetDoc.keys())
+    l_avg = docInverted.average_length or 1.0
+    N = docInverted.document_count or len(docs)
+    forDocScore: Dict[int, float] = {}
+    for doc_id, positions in targetDoc.items():
+        f_td = len(positions)
+        l_d = len(docs.get(doc_id, [])) or 1
+        n_t = len(targetDoc)
 
         TF_BM25 = (f_td * (k_1 + 1)) / ((f_td + k_1) * ((1 - b) + b * (l_d / l_avg)))
         idf = math.log((N - n_t + 0.5) / (n_t + 0.5) + 1.0)
 
         Score_BM25 = idf * TF_BM25
-        forDocScore[doc] = Score_BM25
+        forDocScore[doc_id] = Score_BM25
 
     return forDocScore
 
-def searchWord(target: str, docInverted):
-    try:
-      containTargetList = docInverted.index[target]
-    except KeyError:
-      return None
-    docTargetCount = {}
-    for t in containTargetList:
-      if docTargetCount.get(t[0]) == None:
-        docTargetCount[t[0]] = 1
-      else:
-        docTargetCount[t[0]] = docTargetCount[t[0]] + 1
+def searchWord(target: str, docInverted: DocumentInverted):
+    containTargetList = docInverted.term_postings(target)
+    if not containTargetList:
+        return None
 
-    mostList = {"id": 0, "count": 0}
-    for docTargetCountKey in docTargetCount.keys():
-      if docTargetCount[docTargetCountKey] > mostList["count"]:
-        mostList["id"] = docTargetCountKey
-        mostList["count"] = docTargetCount[docTargetCountKey]
+    docTargetCount: Dict[int, int] = {}
+    for doc_id, _ in containTargetList:
+        docTargetCount[doc_id] = docTargetCount.get(doc_id, 0) + 1
 
-    return mostList
+    most_id = max(docTargetCount, key=docTargetCount.get)
+    return {"id": most_id, "count": docTargetCount[most_id]}
 
 def FileToIndex(filePath: str):
-    docInvertedIndex = None
-    docIdFilePosition: Dict[int, Dict[str, int]] = {}
+    document_index = DocumentInverted()
 
     def _finalize_chunk(end_position: int, chunk: List[str], chunk_start: int, chunk_id: int):
-        nonlocal docInvertedIndex
         if not chunk:
             return chunk_id
 
         chunk_id += 1
         chunk_tokens = text_to_token(" ".join(chunk))
-
-        if docInvertedIndex is None:
-            docInvertedIndex = create_document_inverted_index({chunk_id: chunk_tokens})
-        else:
-            docInvertedIndex = addDocumentInvertedIndex(docInvertedIndex, chunk_tokens, chunk_id)
-
-        docIdFilePosition[chunk_id] = {
-            "start": chunk_start,
-            "end": end_position,
-        }
+        document_index.add_chunk(chunk_id, chunk_tokens, chunk_start, end_position)
 
         if chunk_id % 1000 == 0:
             print(chunk_id)
@@ -231,7 +206,7 @@ def FileToIndex(filePath: str):
             chunk.clear()
             chunk_start_position = f.tell()
 
-    return docInvertedIndex, docIdFilePosition
+    return document_index
 
 def getDocumentByLine(start: int, end: int, TEXT_PATH: str):
     lines = [] 
@@ -242,18 +217,17 @@ def getDocumentByLine(start: int, end: int, TEXT_PATH: str):
     return lines
 
 if __name__ == "__main__":
-    from collections import defaultdict
-
     #TEXT_PATH = "../data/enwiki-latest-pages-articles-multistream.xml"
     TEXT_PATH = "../data/hamlet_TXT_FolgerShakespeare.txt"
     
-    docInverted = FileToIndex(TEXT_PATH)
-    print(docInverted)
+    document_index = FileToIndex(TEXT_PATH)
+    print(document_index)
 
-    result = searchWord("To", docInverted[0])
-    forDocPosition = docInverted[1][result["id"]]
-    print(result)
-    print(getDocumentByLine(forDocPosition["start"], forDocPosition["end"], TEXT_PATH))
+    result = searchWord("To", document_index)
+    if result:
+        for_doc_position = document_index.doc_positions[result["id"]]
+        print(result)
+        print(getDocumentByLine(for_doc_position["start"], for_doc_position["end"], TEXT_PATH))
 
 # with open(TEXT_PATH, encoding="utf-8") as f:
    #     text = f.read()
